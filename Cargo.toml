@@ -1,0 +1,40 @@
+[package]
+name = "nsds"
+version = "0.1.0"
+authors = ["d0nut <nathanial.lattimer@gmail.com>"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+# [[bin]]
+# name = "trent"
+# path = "src/trent.rs"
+
+[[bin]]
+name = "alice"
+path = "src/alice.rs"
+
+[[bin]]
+name = "bob"
+path = "src/bob.rs"
+
+[[bin]]
+name = "challenge"
+path = "src/challenge/challenge.rs"
+
+[lib]
+name = "shared_lib"
+path = "src/shared_lib/mod.rs"
+
+
+[dependencies]
+gotham = { git = "https://github.com/gotham-rs/gotham.git" }
+gotham_derive = { git = "https://github.com/gotham-rs/gotham.git" }
+futures = "^0.3"
+mime = "0.3.16"
+serde = { version = "^1.0", features = ["derive"] }
+serde_json = "^1.0"
+hyper = "^0.13"
+rand = "0.7.3"
+base64 = "0.12.0"
+ed25519-dalek = { version = "1.0.0-pre.3" }
