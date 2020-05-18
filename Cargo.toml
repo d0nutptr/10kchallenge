@@ -6,17 +6,17 @@ edition = "2018"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
-# [[bin]]
-# name = "trent"
-# path = "src/trent.rs"
+[[bin]]
+name = "iam"
+path = "src/iam/iam.rs"
 
 [[bin]]
 name = "alice"
-path = "src/alice.rs"
+path = "src/alice/alice.rs"
 
 [[bin]]
 name = "bob"
-path = "src/bob.rs"
+path = "src/bob/bob.rs"
 
 [[bin]]
 name = "challenge"
@@ -32,9 +32,13 @@ gotham = { git = "https://github.com/gotham-rs/gotham.git" }
 gotham_derive = { git = "https://github.com/gotham-rs/gotham.git" }
 futures = "^0.3"
 mime = "0.3.16"
+reqwest = { version = "^0.10", features = ["blocking", "json"] }
 serde = { version = "^1.0", features = ["derive"] }
+serde_derive = "^1.0"
 serde_json = "^1.0"
 hyper = "^0.13"
 rand = "0.7.3"
 base64 = "0.12.0"
-ed25519-dalek = { version = "1.0.0-pre.3" }
+tokio = "^0.2"
+sha2 = "0.8.1"
+rsa = "0.2.0"
