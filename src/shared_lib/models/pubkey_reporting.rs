@@ -1,5 +1,5 @@
 use serde::{Serialize, Deserialize};
-use crate::X_INTERNAL_AUTH_SECRET;
+use crate::{X_INTERNAL_AUTH_SECRET, B64String};
 use rsa::{RSAPublicKey, BigUint, PublicKey};
 
 #[derive(Serialize, Deserialize)]
@@ -20,7 +20,7 @@ pub struct PublicKeyInquiry {
     pub subject: Participant
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize, PartialEq)]
 pub enum Participant {
     ALICE,
     BOB,
@@ -31,6 +31,14 @@ pub enum Participant {
 pub struct IAMPublicKeyReport {
     pub payload: IAMPublicKeyReportSecure,
     pub signature: String
+}
+
+impl IAMPublicKeyReport {
+    pub fn get_public_key(&self) -> Option<RSAPublicKey> {
+        RSAPublicKey::new(
+            BigUint::from_bytes_le(&self.payload.n.b64_tolerant_decode()),
+            BigUint::from_bytes_le(&self.payload.e.b64_tolerant_decode())).ok()
+    }
 }
 
 #[derive(Serialize, Deserialize)]

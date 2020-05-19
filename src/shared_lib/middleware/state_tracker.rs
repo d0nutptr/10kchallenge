@@ -70,7 +70,7 @@ where
 
 }
 
-pub trait ChallengeState: Send + Clone {
+pub trait ChallengeState: Send + Clone + PartialEq {
     fn default_state() -> Self;
 }
 

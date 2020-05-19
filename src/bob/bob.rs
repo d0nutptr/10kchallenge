@@ -1,6 +1,6 @@
 use std::env;
 use rsa::{RSAPrivateKey, RSAPublicKey};
-use shared_lib::{ServiceKeyState, RateLimitState, fetch_challenge_public_key, report_service_public_key, Participant, StateTrackerState, InfraState, InternalServiceMiddleware, ChallengeStateTrackerMiddleware, RateLimitMiddleware, ChallengeState};
+use shared_lib::{ServiceKeyState, RateLimitState, fetch_challenge_public_key, report_service_public_key, Participant, StateTrackerState, InfraState, InternalServiceMiddleware, ChallengeStateTrackerMiddleware, RateLimitMiddleware, ChallengeState, get_current_state};
 use gotham::pipeline::set::{new_pipeline_set, finalize_pipeline_set};
 use gotham::pipeline::new_pipeline;
 use gotham::middleware::state::StateMiddleware;
@@ -10,8 +10,11 @@ use gotham::state::State;
 use hyper::{Response, Body, StatusCode};
 use rand::rngs::OsRng;
 use gotham::router::Router;
+use std::sync::{Arc, Mutex};
+use std::collections::HashMap;
 
 mod receive_nonce;
+mod ack_nonce;
 
 const ADDR_CHALLENGE: &str = "ADDR_CHALLENGE";
 const ADDR_IAM: &str = "ADDR_IAM";
@@ -82,7 +85,7 @@ fn bob_router(internal_service_secret: String, challenge_state: StateTrackerStat
 
     let (pipelines, alice_pipeline) = pipelines.add(
         new_pipeline()
-            .add(RateLimitMiddleware::new(rate_limit_state.clone()))
+            //.add(RateLimitMiddleware::new(rate_limit_state.clone()))
             .add(ChallengeStateTrackerMiddleware::new(challenge_state.clone()))
             .add(StateMiddleware::new(service_key_state.clone()))
             .add(StateMiddleware::new(infra_state.clone()))
@@ -97,7 +100,8 @@ fn bob_router(internal_service_secret: String, challenge_state: StateTrackerStat
         route.get("/").to(index);
 
         route.scope("/challenge", |route| {
-            route.post("/receive_nonce").to(index)
+            route.post("/receive_nonce").to(receive_nonce::receive_nonce);
+            route.post("/ack_nonce").to(ack_nonce::ack_nonce);
         });
     })
 }
@@ -108,7 +112,7 @@ fn index(state: State) -> (State, Response<Body>) {
     (state, response)
 }
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 pub enum BobStates {
     INITIAL,
     AWAITING_NONCE {
@@ -123,5 +127,18 @@ pub enum BobStates {
 impl ChallengeState for BobStates {
     fn default_state() -> Self {
         BobStates::INITIAL
+    }
+}
+
+pub fn apply_state_gate_bob(state: &State, ideal_state: BobStates) -> Result<(String, String, Arc<Mutex<HashMap<String, BobStates>>>, BobStates), ()> {
+    let (state_id, state_sig, state_map, current_state) = get_current_state::<BobStates>(state);
+
+    match (&current_state, ideal_state) {
+        (BobStates::INITIAL, BobStates::INITIAL)
+        | (BobStates::DONE, BobStates::DONE)
+        | (BobStates::AWAITING_NONCE { .. }, BobStates::AWAITING_NONCE { .. }) => {
+            Ok((state_id, state_sig, state_map, current_state))
+        },
+        _ => Err(())
     }
 }

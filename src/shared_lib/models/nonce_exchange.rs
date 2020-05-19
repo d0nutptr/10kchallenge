@@ -13,17 +13,28 @@ pub struct AliceNoncePayload {
 }
 
 #[derive(Serialize, Deserialize)]
-pub struct BobNoncePayload {
+pub struct BobNoncePayloadInner {
     pub nonce_a: String,
     pub nonce_b: String
 }
 
 #[derive(Serialize, Deserialize)]
-pub struct AliceAckPayload {
+pub struct BobNoncePayload {
+    pub enc_payload: String
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct AliceAckPayloadInner {
     pub nonce_b: String
 }
 
 #[derive(Serialize, Deserialize)]
+pub struct AliceAckPayload {
+    pub enc_payload: String
+}
+
+#[derive(Serialize, Deserialize)]
 pub struct BobSecretMessage {
-    pub secret_message: String
+    pub ciphertext: String,
+    pub nonce: String
 }

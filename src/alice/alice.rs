@@ -1,5 +1,5 @@
 use std::env;
-use shared_lib::{RateLimitState, ServiceKeyState, X_INTERNAL_AUTH_SECRET, InternalServiceMiddleware, RateLimitMiddleware, fetch_challenge_public_key, report_service_public_key, Participant, InfraState, ChallengeState, ChallengeStateTrackerMiddleware, StateTrackerState};
+use shared_lib::{RateLimitState, ServiceKeyState, X_INTERNAL_AUTH_SECRET, InternalServiceMiddleware, RateLimitMiddleware, fetch_challenge_public_key, report_service_public_key, Participant, InfraState, ChallengeState, ChallengeStateTrackerMiddleware, StateTrackerState, get_current_state};
 use gotham::router::Router;
 use gotham::pipeline::set::{new_pipeline_set, finalize_pipeline_set};
 use gotham::pipeline::new_pipeline;
@@ -10,6 +10,8 @@ use gotham::state::State;
 use hyper::{Response, Body, StatusCode};
 use gotham::helpers::http::response::create_response;
 use rsa::{RSAPrivateKey, RSAPublicKey};
+use std::sync::{Mutex, Arc};
+use std::collections::HashMap;
 
 mod initiate_auth_protocol;
 mod nonce_verification;
@@ -97,7 +99,7 @@ fn alice_router(internal_service_secret: String, challenge_state: StateTrackerSt
 
     let (pipelines, alice_pipeline) = pipelines.add(
         new_pipeline()
-            .add(RateLimitMiddleware::new(rate_limit_state.clone()))
+            //.add(RateLimitMiddleware::new(rate_limit_state.clone()))
             .add(ChallengeStateTrackerMiddleware::new(challenge_state.clone()))
             .add(StateMiddleware::new(service_key_state.clone()))
             .add(StateMiddleware::new(infra_state.clone()))
@@ -113,7 +115,7 @@ fn alice_router(internal_service_secret: String, challenge_state: StateTrackerSt
         route.get("/").to(index);
 
         route.scope("/challenge", |route| {
-            route.post("/verify_nonces").to(verify_nonces)
+            route.post("/verify_nonce").to(nonce_verification::verify_nonce);
         });
 
         route.with_pipeline_chain(internal_chain, |route| {
@@ -136,11 +138,7 @@ fn index(state: State) -> (State, Response<Body>) {
     (state, response)
 }
 
-fn verify_nonces(state: State) -> (State, Response<Body>) {
-    unimplemented!()
-}
-
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 pub enum AliceStates {
     INITIAL,
     AWAITING_NONCE {
@@ -154,5 +152,18 @@ pub enum AliceStates {
 impl ChallengeState for AliceStates {
     fn default_state() -> Self {
         AliceStates::INITIAL
+    }
+}
+
+pub fn apply_state_gate_alice(state: &State, ideal_state: AliceStates) -> Result<(String, String, Arc<Mutex<HashMap<String, AliceStates>>>, AliceStates), ()> {
+    let (state_id, state_sig, state_map, current_state) = get_current_state::<AliceStates>(state);
+
+    match (&current_state, ideal_state) {
+        (AliceStates::INITIAL, AliceStates::INITIAL)
+        | (AliceStates::DONE, AliceStates::DONE)
+        | (AliceStates::AWAITING_NONCE { .. }, AliceStates::AWAITING_NONCE { .. }) => {
+            Ok((state_id, state_sig, state_map, current_state))
+        },
+        _ => Err(())
     }
 }

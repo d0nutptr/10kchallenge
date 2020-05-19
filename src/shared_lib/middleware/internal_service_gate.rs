@@ -7,6 +7,7 @@ use gotham::handler::{HandlerError, HandlerFuture};
 use futures::Future;
 use gotham::helpers::http::response::create_response;
 use futures::future::ok;
+use crate::time_safe_comparison;
 
 pub const X_INTERNAL_AUTH_SECRET: &str = "X-INTERNAL-AUTH-SECRET";
 
@@ -48,20 +49,6 @@ impl InternalServiceMiddleware {
             enforce_secret
         }
     }
-
-    fn time_safe_comparison(left: Vec<u8>, right: Vec<u8>) -> bool {
-        if left.len() != right.len() {
-            return false;
-        }
-
-        let mut tracker_value: u8 = 0;
-
-        for (left_value, right_value) in left.iter().zip(right) {
-            tracker_value |= left_value ^ right_value;
-        }
-
-        tracker_value == 0
-    }
 }
 
 impl Middleware for InternalServiceMiddleware {
@@ -97,7 +84,7 @@ impl Middleware for InternalServiceMiddleware {
                 },
             };
 
-            if !Self::time_safe_comparison(self.internal_service_state.internal_service_secret.clone(), internal_auth_secret_value) {
+            if !time_safe_comparison(self.internal_service_state.internal_service_secret.clone(), internal_auth_secret_value) {
                 let mut response = create_response(
                     &state,
                     StatusCode::UNAUTHORIZED,

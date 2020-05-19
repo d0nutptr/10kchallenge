@@ -2,10 +2,14 @@ use gotham::state::{State, FromState};
 use std::pin::Pin;
 use gotham::handler::HandlerFuture;
 use futures::FutureExt;
-use shared_lib::{AsyncHandlerResponse, StateTrackerState, InfraState, return_generic_error, X_PROXY_ADDR, Participant, PublicKeyInquiry, extract_json, AliceNoncePayload, B64String, ServiceKeyState, SmartRSAPrivateKey, AliceNoncePayloadInner};
-use crate::{BobStates, ADDR_IAM};
-use hyper::HeaderMap;
+use shared_lib::*;
+use crate::{BobStates, ADDR_IAM, apply_state_gate_bob};
+use hyper::{HeaderMap, StatusCode};
 use std::env;
+use tokio::spawn;
+use gotham::helpers::http::response::create_empty_response;
+use reqwest::Proxy;
+use std::time::Duration;
 
 pub fn receive_nonce(state: State) -> Pin<Box<HandlerFuture>> {
     receive_nonce_async(state).boxed()
@@ -21,52 +25,9 @@ async fn receive_nonce_async(mut state: State) -> AsyncHandlerResponse {
         6. record nonce_a, party, and party's public key into the state and update state to the listening for nonce
         7. ping party with nonce_b
      */
-    let state_tracker = StateTrackerState::<BobStates>::borrow_from(&state);
-    let infra_state = InfraState::borrow_from(&state);
-
-    let state_id = state_tracker.get_current_state_id();
-    let state_sig = state_tracker.get_current_state_signature();
-    let mut bob_state_map = state_tracker.internal_states.clone();
-
-    let current_state = {
-        bob_state_map.lock().unwrap().get(&state_id).unwrap().clone()
-    };
-
-    let iam_public_key = {
-        infra_state.iam_pub_key.lock().unwrap().clone().unwrap()
-    };
-
-    // enforce state is initial state
-    match current_state {
-        BobStates::INITIAL => {},
+    let (state_id, state_sig, state_map) = match apply_state_gate_bob(&state, BobStates::INITIAL) {
+        Ok((state_id, state_sig, state_map, _)) => (state_id, state_sig, state_map),
         _ => return Ok(return_generic_error(state))
-    };
-
-    let alice_nonce_payload: AliceNoncePayload = {
-        match extract_json(&mut state).await {
-            Some(request) => request,
-            None => return Ok(return_generic_error(state))
-        }
-    };
-
-    let service_state = ServiceKeyState::borrow_from(&state);
-
-    let alice_nonce_payload_inner: AliceNoncePayloadInner = match service_state.priv_key.smart_decrypt(alice_nonce_payload.enc_payload.b64_tolerant_decode())
-        .map(|payload|serde_json::from_slice(&payload)) {
-        Some(Ok(payload)) => payload,
-        _ => return Ok(return_generic_error(state))
-    };
-
-    let nonce_a = alice_nonce_payload_inner.nonce_a;
-
-    let public_key_inquiry_payload = PublicKeyInquiry {
-        inquiring_party: Participant::BOB,
-        subject: alice_nonce_payload_inner.party
-    };
-
-    let iam_service_address = match env::var(ADDR_IAM) {
-        Ok(addr) => addr,
-        _ => panic!("{} not set", ADDR_IAM)
     };
 
     let proxy_addr = match HeaderMap::borrow_from(&state).get(X_PROXY_ADDR) {
@@ -74,6 +35,102 @@ async fn receive_nonce_async(mut state: State) -> AsyncHandlerResponse {
         _ => return Ok(return_generic_error(state))
     };
 
+    let infra_state = InfraState::borrow_from(&state);
+    let iam_public_key = {
+        infra_state.iam_pub_key.lock().unwrap().clone().unwrap()
+    };
 
-    unimplemented!()
+    let alice_nonce_payload = match extract_and_decrypt_alice_payload(&mut state).await {
+        Some(alice_nonce_payload) => alice_nonce_payload,
+        _ => return Ok(return_generic_error(state))
+    };
+
+    spawn(async move {
+        let proxy = match Proxy::http(&proxy_addr) {
+            Ok(proxy) => proxy,
+            _ => return
+        };
+
+        let mut http_client = match create_async_http_client(Some(proxy)) {
+            Some(client) => client,
+            None => return
+        };
+
+        let public_key_report = match get_publickey_from_iam(&mut http_client, iam_public_key, Participant::BOB, alice_nonce_payload.party).await {
+            Ok(public_key_report) => public_key_report,
+            _ => return
+        };
+
+        let target_party_public_key = match public_key_report.get_public_key() {
+            Some(key) => key,
+            _ => return
+        };
+
+        let nonce_a = alice_nonce_payload.nonce_a.clone();
+        let nonce_b = generate_nonce();
+
+        {
+            let new_state = BobStates::AWAITING_NONCE {
+                party_public_key: target_party_public_key.clone(),
+                party: public_key_report.payload.subject.clone(),
+                nonce_a: nonce_a.clone(),
+                nonce_b: nonce_b.clone()
+            };
+
+            state_map.lock().unwrap().insert(state_id.clone(), new_state);
+        }
+
+        let target_party_address = match get_participant_address(public_key_report.payload.subject.clone()) {
+            Some(address) => address,
+            None => return
+        };
+
+        let nonce_exchange_payload = {
+            let bob_nonce_payload = BobNoncePayloadInner {
+                nonce_a,
+                nonce_b
+            };
+
+            let nonce_payload_str = serde_json::to_string(&bob_nonce_payload).unwrap();
+
+            let encrypted_payload = match target_party_public_key.smart_encrypt(nonce_payload_str.into_bytes()) {
+                Some(payload) => payload.b64_encode(),
+                _ => return
+            };
+
+            BobNoncePayload {
+                enc_payload: encrypted_payload
+            }
+        };
+
+        // send a request to address initiating the nonce exchange
+        let _ = http_client.post(&format!("{}/challenge/verify_nonce", target_party_address))
+            .header(X_PROXY_ADDR, proxy_addr)
+            .header(X_PROTO_STATE_ID, state_id)
+            .header(X_PROTO_STATE_SIG, state_sig)
+            .body(serde_json::to_string(&nonce_exchange_payload).unwrap())
+            .timeout(Duration::new(30, 0))
+            .send()
+            .await;
+    });
+
+    let response = create_empty_response(&state, StatusCode::OK);
+
+    Ok((state, response))
+}
+
+async fn extract_and_decrypt_alice_payload(state: &mut State) -> Option<AliceNoncePayloadInner> {
+    let alice_nonce_payload: AliceNoncePayload = {
+        match extract_json(state).await {
+            Some(request) => request,
+            None => return None
+        }
+    };
+
+    let service_state = ServiceKeyState::borrow_from(&state);
+    match service_state.priv_key.smart_decrypt(alice_nonce_payload.enc_payload.b64_tolerant_decode())
+        .map(|payload|serde_json::from_slice(&payload)) {
+        Some(Ok(payload)) => payload,
+        _ => None
+    }
 }
