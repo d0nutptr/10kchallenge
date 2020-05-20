@@ -22,6 +22,10 @@ path = "src/bob/bob.rs"
 name = "challenge"
 path = "src/challenge/challenge.rs"
 
+[[bin]]
+name = "solution"
+path = "src/solution/solution.rs"
+
 [lib]
 name = "shared_lib"
 path = "src/shared_lib/mod.rs"

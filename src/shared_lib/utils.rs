@@ -75,7 +75,7 @@ pub fn create_async_http_client(proxy: Option<Proxy>) -> Option<Client> {
     };
 
     builder.redirect(Policy::none())
-        .timeout(Duration::new(30, 0))
+        .timeout(Duration::new(15, 0))
         .build()
         .ok()
 }
@@ -152,7 +152,7 @@ pub trait B64String {
 
 impl B64String for String {
     fn b64_tolerant_decode(&self) -> Vec<u8> {
-        base64::decode(self).unwrap_or(vec![])
+        base64::decode(self.trim()).unwrap_or(vec![])
     }
 }
 
