@@ -78,7 +78,7 @@ fn challenge_router(service_key_state: ServiceKeyState, internal_service_secret:
     let (pipelines, challenge_pipeline) = pipelines.add(
         new_pipeline()
             .add(InternalServiceMiddleware::new(internal_service_secret, false))
-            //.add(RateLimitMiddleware::new(rate_limit_state.clone()))
+            .add(RateLimitMiddleware::new(rate_limit_state.clone()))
             .add(StateMiddleware::new(service_key_state.clone()))
             .build()
     );

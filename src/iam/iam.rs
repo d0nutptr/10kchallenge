@@ -67,7 +67,6 @@ fn iam_router(service_key_state: ServiceKeyState, iam_state: IAMState, internal_
 
     let (pipelines, internal_pipeline) = pipelines.add(
         new_pipeline()
-            //.add(RateLimitMiddleware::new(rate_limit_state.clone()))
             .add(StateMiddleware::new(service_key_state.clone()))
             .add(StateMiddleware::new(iam_state.clone()))
             .add(InternalServiceMiddleware::new(internal_service_secret, true))
@@ -76,7 +75,7 @@ fn iam_router(service_key_state: ServiceKeyState, iam_state: IAMState, internal_
 
     let (pipelines, iam_pipeline) = pipelines.add(
         new_pipeline()
-            //.add(RateLimitMiddleware::new(rate_limit_state.clone()))
+            .add(RateLimitMiddleware::new(rate_limit_state.clone()))
             .add(StateMiddleware::new(service_key_state.clone()))
             .add(StateMiddleware::new(iam_state.clone()))
             .build()

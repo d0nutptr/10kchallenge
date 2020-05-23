@@ -86,7 +86,7 @@ fn bob_router(internal_service_secret: String, challenge_state: StateTrackerStat
 
     let (pipelines, bob_pipeline) = pipelines.add(
         new_pipeline()
-            //.add(RateLimitMiddleware::new(rate_limit_state.clone()))
+            .add(RateLimitMiddleware::new(rate_limit_state.clone()))
             .add(ChallengeStateTrackerMiddleware::new(challenge_state.clone()))
             .add(StateMiddleware::new(service_key_state.clone()))
             .add(StateMiddleware::new(infra_state.clone()))
