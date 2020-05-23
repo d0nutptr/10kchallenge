@@ -1,5 +1,5 @@
 use std::env;
-use shared_lib::{RateLimitState, ServiceKeyState, X_INTERNAL_AUTH_SECRET, InternalServiceMiddleware, RateLimitMiddleware, fetch_challenge_public_key, report_service_public_key, Participant, InfraState, ChallengeState, ChallengeStateTrackerMiddleware, StateTrackerState, get_current_state};
+use shared_lib::{RateLimitState, ServiceKeyState, X_INTERNAL_AUTH_SECRET, InternalServiceMiddleware, RateLimitMiddleware, fetch_challenge_public_key, report_service_public_key, Participant, InfraState, ChallengeState, ChallengeStateTrackerMiddleware, StateTrackerState, get_current_state, PartyState};
 use gotham::router::Router;
 use gotham::pipeline::set::{new_pipeline_set, finalize_pipeline_set};
 use gotham::pipeline::new_pipeline;
@@ -12,6 +12,8 @@ use gotham::helpers::http::response::create_response;
 use rsa::{RSAPrivateKey, RSAPublicKey};
 use std::sync::{Mutex, Arc};
 use std::collections::HashMap;
+use lru_cache::LruCache;
+use std::any::{Any, TypeId};
 
 mod initiate_auth_protocol;
 mod nonce_verification;
@@ -68,7 +70,7 @@ fn main() {
         None => panic!("Failed to report our public key and fetch the iam public key")
     };
 
-    let challenge_state: StateTrackerState<AliceStates> = StateTrackerState::new("Alice".to_string(), challenge_service_public_key.clone());
+    let challenge_state: StateTrackerState = StateTrackerState::new("Alice".to_string(), challenge_service_public_key.clone());
 
     let infra_state = InfraState::new(challenge_service_public_key, iam_service_public_key);
 
@@ -85,24 +87,24 @@ fn main() {
     }
 }
 
-fn alice_router(internal_service_secret: String, challenge_state: StateTrackerState<AliceStates>, service_key_state: ServiceKeyState, infra_state: InfraState, rate_limit_state: RateLimitState) -> Router {
+fn alice_router(internal_service_secret: String, challenge_state: StateTrackerState, service_key_state: ServiceKeyState, infra_state: InfraState, rate_limit_state: RateLimitState) -> Router {
     let pipelines = new_pipeline_set();
 
     let (pipelines, internal_pipeline) = pipelines.add(
         new_pipeline()
             .add(InternalServiceMiddleware::new(internal_service_secret, true))
             .add(StateMiddleware::new(service_key_state.clone()))
-            .add(ChallengeStateTrackerMiddleware::new(challenge_state.clone()))
             .add(StateMiddleware::new(infra_state.clone()))
+            .add(ChallengeStateTrackerMiddleware::new(challenge_state.clone()))
             .build()
     );
 
     let (pipelines, alice_pipeline) = pipelines.add(
         new_pipeline()
             //.add(RateLimitMiddleware::new(rate_limit_state.clone()))
-            .add(ChallengeStateTrackerMiddleware::new(challenge_state.clone()))
             .add(StateMiddleware::new(service_key_state.clone()))
             .add(StateMiddleware::new(infra_state.clone()))
+            .add(ChallengeStateTrackerMiddleware::new(challenge_state.clone()))
             .build()
     );
 
@@ -138,32 +140,3 @@ fn index(state: State) -> (State, Response<Body>) {
     (state, response)
 }
 
-#[derive(Clone, PartialEq)]
-pub enum AliceStates {
-    INITIAL,
-    AWAITING_NONCE {
-        party_public_key: RSAPublicKey,
-        party: Participant,
-        nonce_a: String,
-    },
-    DONE
-}
-
-impl ChallengeState for AliceStates {
-    fn default_state() -> Self {
-        AliceStates::INITIAL
-    }
-}
-
-pub fn apply_state_gate_alice(state: &State, ideal_state: AliceStates) -> Result<(String, String, Arc<Mutex<HashMap<String, AliceStates>>>, AliceStates), ()> {
-    let (state_id, state_sig, state_map, current_state) = get_current_state::<AliceStates>(state);
-
-    match (&current_state, ideal_state) {
-        (AliceStates::INITIAL, AliceStates::INITIAL)
-        | (AliceStates::DONE, AliceStates::DONE)
-        | (AliceStates::AWAITING_NONCE { .. }, AliceStates::AWAITING_NONCE { .. }) => {
-            Ok((state_id, state_sig, state_map, current_state))
-        },
-        _ => Err(())
-    }
-}

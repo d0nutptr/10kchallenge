@@ -12,6 +12,7 @@ use rand::rngs::OsRng;
 use gotham::router::Router;
 use std::sync::{Arc, Mutex};
 use std::collections::HashMap;
+use lru_cache::LruCache;
 
 mod receive_nonce;
 mod ack_nonce;
@@ -63,7 +64,7 @@ fn main() {
         None => panic!("Failed to report our public key and fetch the iam public key")
     };
 
-    let challenge_state: StateTrackerState<BobStates> = StateTrackerState::new("Bob".to_string(), challenge_service_public_key.clone());
+    let challenge_state: StateTrackerState = StateTrackerState::new("Bob".to_string(), challenge_service_public_key.clone());
 
     let infra_state = InfraState::new(challenge_service_public_key, iam_service_public_key);
 
@@ -80,10 +81,10 @@ fn main() {
     }
 }
 
-fn bob_router(internal_service_secret: String, challenge_state: StateTrackerState<BobStates>, service_key_state: ServiceKeyState, infra_state: InfraState, rate_limit_state: RateLimitState) -> Router {
+fn bob_router(internal_service_secret: String, challenge_state: StateTrackerState, service_key_state: ServiceKeyState, infra_state: InfraState, rate_limit_state: RateLimitState) -> Router {
     let pipelines = new_pipeline_set();
 
-    let (pipelines, alice_pipeline) = pipelines.add(
+    let (pipelines, bob_pipeline) = pipelines.add(
         new_pipeline()
             //.add(RateLimitMiddleware::new(rate_limit_state.clone()))
             .add(ChallengeStateTrackerMiddleware::new(challenge_state.clone()))
@@ -94,7 +95,7 @@ fn bob_router(internal_service_secret: String, challenge_state: StateTrackerStat
 
     let pipeline_set = finalize_pipeline_set(pipelines);
 
-    let iam_chain = (alice_pipeline, ());
+    let iam_chain = (bob_pipeline, ());
 
     build_router(iam_chain, pipeline_set, |route| {
         route.get("/").to(index);
@@ -110,35 +111,4 @@ fn index(state: State) -> (State, Response<Body>) {
     let response = create_empty_response(&state, StatusCode::OK);
 
     (state, response)
-}
-
-#[derive(Clone, PartialEq)]
-pub enum BobStates {
-    INITIAL,
-    AWAITING_NONCE {
-        party_public_key: RSAPublicKey,
-        party: Participant,
-        nonce_a: String,
-        nonce_b: String,
-    },
-    DONE
-}
-
-impl ChallengeState for BobStates {
-    fn default_state() -> Self {
-        BobStates::INITIAL
-    }
-}
-
-pub fn apply_state_gate_bob(state: &State, ideal_state: BobStates) -> Result<(String, String, Arc<Mutex<HashMap<String, BobStates>>>, BobStates), ()> {
-    let (state_id, state_sig, state_map, current_state) = get_current_state::<BobStates>(state);
-
-    match (&current_state, ideal_state) {
-        (BobStates::INITIAL, BobStates::INITIAL)
-        | (BobStates::DONE, BobStates::DONE)
-        | (BobStates::AWAITING_NONCE { .. }, BobStates::AWAITING_NONCE { .. }) => {
-            Ok((state_id, state_sig, state_map, current_state))
-        },
-        _ => Err(())
-    }
 }

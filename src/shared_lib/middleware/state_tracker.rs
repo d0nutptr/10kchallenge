@@ -10,24 +10,22 @@ use gotham::helpers::http::response::create_response;
 use futures::future::ok;
 use rsa::{RSAPublicKey, PublicKey, PaddingScheme};
 use rsa::hash::Hashes;
-use crate::SmartRSAPublicKey;
+use crate::{SmartRSAPublicKey, Participant, get_current_state};
+use serde::export::PhantomData;
+use lru_cache::LruCache;
+use std::any::{TypeId, Any};
 
 pub const X_PROTO_STATE_ID: &str = "X-PROTO-STATE-ID";
 pub const X_PROTO_STATE_SIG: &str = "X-PROTO-STATE-SIG";
+const STATE_CACHE_SIZE_MAX: usize = 32_000;
 
 #[derive(Clone, NewMiddleware)]
-pub struct ChallengeStateTrackerMiddleware<S>
-where
-    S: ChallengeState + 'static
-{
-    state: StateTrackerState<S>
+pub struct ChallengeStateTrackerMiddleware {
+    state: StateTrackerState,
 }
 
-impl<S> ChallengeStateTrackerMiddleware<S>
-where
-    S: ChallengeState + 'static
-{
-    pub fn new(state: StateTrackerState<S>) -> Self {
+impl ChallengeStateTrackerMiddleware {
+    pub fn new(state: StateTrackerState) -> Self {
         Self {
             state
         }
@@ -35,25 +33,19 @@ where
 }
 
 #[derive(Clone, StateData)]
-pub struct StateTrackerState<S>
-where
-    S: ChallengeState + 'static
-{
+pub struct StateTrackerState {
     state_name: String,
-    pub internal_states: Arc<Mutex<HashMap<String, S>>>,
+    pub internal_states: Arc<Mutex<LruCache<String, PartyState>>>,
     current_state_id: Option<String>,
     current_state_signature: Option<String>,
     challenge_service_pubkey: RSAPublicKey,
 }
 
-impl<S> StateTrackerState<S>
-where
-    S: ChallengeState + 'static
-{
+impl StateTrackerState {
     pub fn new(state_name: String, challenge_service_pubkey: RSAPublicKey) -> Self {
         Self {
             state_name,
-            internal_states: Arc::new(Mutex::new(HashMap::new())),
+            internal_states: Arc::new(Mutex::new(LruCache::new(STATE_CACHE_SIZE_MAX))),
             current_state_id: None,
             current_state_signature: None,
             challenge_service_pubkey,
@@ -70,14 +62,10 @@ where
 
 }
 
-pub trait ChallengeState: Send + Clone + PartialEq {
-    fn default_state() -> Self;
+pub trait ChallengeState: Sync + Send + Clone + PartialEq {
 }
 
-impl<S> Middleware for ChallengeStateTrackerMiddleware<S>
-where
-    S: ChallengeState + 'static
-{
+impl Middleware for ChallengeStateTrackerMiddleware {
     fn call<Chain>(self, mut state: State, chain: Chain) -> Pin<Box<HandlerFuture>> where
         Chain: FnOnce(State) -> Pin<Box<HandlerFuture>> + Send + 'static,
         Self: Sized {
@@ -152,7 +140,7 @@ where
 
             // is this request id doesn't yet exist, make it the default state
             if !state_map.contains_key(&state_id) {
-                state_map.insert(state_id.clone(), S::default_state());
+                state_map.insert(state_id.clone(), PartyState::default_state());
             }
         }
 
@@ -162,5 +150,45 @@ where
         state.put(request_state);
 
         chain(state)
+    }
+}
+
+#[derive(Clone)]
+pub enum PartyState {
+    INITIAL,
+    AWAITING_NONCE {
+        party_public_key: RSAPublicKey,
+        party: Participant,
+        nonce_a: String,
+        nonce_b: String,
+    },
+    DONE
+}
+
+impl PartyState {
+    pub fn default_state() -> Self {
+        PartyState::INITIAL
+    }
+
+    pub fn get_state_id(&self) -> u8 {
+        match self {
+            PartyState::INITIAL => PartyState::initial_id(),
+            PartyState::AWAITING_NONCE { .. } => PartyState::awaiting_nonce_id(),
+            PartyState::DONE => PartyState::done_id()
+        }
+    }
+
+    pub fn initial_id() -> u8 { 0 }
+    pub fn awaiting_nonce_id() -> u8 { 1 }
+    pub fn done_id() -> u8 { 2 }
+}
+
+pub fn apply_state_gate(state: &State, ideal_state: u8) -> Result<(String, String, Arc<Mutex<LruCache<String, PartyState>>>, PartyState), ()> {
+    let (state_id, state_sig, state_map, current_state) = get_current_state(state);
+
+    if current_state.get_state_id() == ideal_state {
+        Ok((state_id, state_sig, state_map, current_state))
+    } else {
+        Err(())
     }
 }

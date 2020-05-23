@@ -2,13 +2,13 @@ use futures::FutureExt;
 use gotham::state::{State, FromState};
 use std::pin::Pin;
 use gotham::handler::HandlerFuture;
-use shared_lib::{AsyncHandlerResponse, return_generic_error, Participant, eve_key, BobNoncePayload, extract_json, BobNoncePayloadInner, ServiceKeyState, B64String, SmartRSAPrivateKey, time_safe_comparison, X_PROXY_ADDR, create_async_http_client, AliceNoncePayload, AliceAckPayloadInner, SmartRSAPublicKey, B64Vec, get_participant_address, X_PROTO_STATE_ID, X_PROTO_STATE_SIG, AliceAckPayload};
-use crate::{AliceStates, apply_state_gate_alice};
+use shared_lib::{AsyncHandlerResponse, return_generic_error, Participant, eve_key, BobNoncePayload, extract_json, BobNoncePayloadInner, ServiceKeyState, B64String, SmartRSAPrivateKey, time_safe_comparison, X_PROXY_ADDR, create_async_http_client, AliceNoncePayload, AliceAckPayloadInner, SmartRSAPublicKey, B64Vec, get_participant_address, X_PROTO_STATE_ID, X_PROTO_STATE_SIG, AliceAckPayload, PartyState, apply_state_gate};
 use rsa::{RSAPublicKey, RSAPrivateKey, BigUint};
 use hyper::{StatusCode, HeaderMap};
 use gotham::helpers::http::response::create_empty_response;
 use reqwest::Proxy;
 use std::time::Duration;
+use std::any::TypeId;
 
 pub fn verify_nonce(state: State) -> Pin<Box<HandlerFuture>> {
     verify_nonce_async(state).boxed()
@@ -23,14 +23,7 @@ async fn verify_nonce_async(mut state: State) -> AsyncHandlerResponse {
         5. send back to the expected party based on the state
      */
 
-    // we do this because I couldn't figure out a way to pass two enums and check if they are the same..
-    let faux_awaiting_nonce_state = AliceStates::AWAITING_NONCE {
-        party_public_key: eve_key().0,
-        party: Participant::ALICE,
-        nonce_a: "".to_string()
-    };
-    
-    let (state_id, state_sig, state_map, current_state) = match apply_state_gate_alice(&state, faux_awaiting_nonce_state ) {
+    let (state_id, state_sig, state_map, current_state) = match apply_state_gate(&state, PartyState::awaiting_nonce_id()) {
         Ok((state_id, state_sig, state_map, current_state)) => (state_id, state_sig, state_map, current_state),
         _ => return Ok(return_generic_error(state))
     };
@@ -43,8 +36,8 @@ async fn verify_nonce_async(mut state: State) -> AsyncHandlerResponse {
 
     // gather the stateful elements
     let (party_public_key, target_party, known_nonce_a) = match current_state {
-        AliceStates::AWAITING_NONCE {
-            party_public_key, party, nonce_a
+        PartyState::AWAITING_NONCE {
+            party_public_key, party, nonce_a, nonce_b
         } => (party_public_key, party, nonce_a),
         // this should never happen because of the gate above; we have this here because rust tries to protect us unnecessarily
         _ => return Ok(return_generic_error(state))
@@ -97,7 +90,7 @@ async fn verify_nonce_async(mut state: State) -> AsyncHandlerResponse {
         };
 
         // finish with updating alice to be done
-        state_map.lock().unwrap().insert(state_id.clone(), AliceStates::DONE);
+        state_map.lock().unwrap().insert(state_id.clone(), PartyState::DONE);
 
         let _ = http_client.post(&format!("{}/challenge/ack_nonce", target_party_address))
             .header(X_PROXY_ADDR, proxy_addr)

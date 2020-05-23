@@ -11,7 +11,7 @@ use reqwest::redirect::Policy;
 use rand::{Rng, thread_rng, RngCore};
 use rand::distributions::Alphanumeric;
 use tokio::time::Duration;
-use crate::{Participant, ChallengeState, StateTrackerState, PublicKeyInquiry, IAMPublicKeyReport, InfraState};
+use crate::{Participant, ChallengeState, StateTrackerState, PublicKeyInquiry, IAMPublicKeyReport, InfraState, PartyState};
 use rsa::{RSAPrivateKey, PaddingScheme, RSAPublicKey, PublicKey};
 use sha2::{Sha256, Digest};
 use rsa::hash::Hashes;
@@ -19,6 +19,7 @@ use rand::rngs::OsRng;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::env;
+use lru_cache::LruCache;
 
 const ADDR_IAM: &str = "ADDR_IAM";
 const ADDR_BOB: &str = "ADDR_BOB";
@@ -75,7 +76,7 @@ pub fn create_async_http_client(proxy: Option<Proxy>) -> Option<Client> {
     };
 
     builder.redirect(Policy::none())
-        .timeout(Duration::new(15, 0))
+        .timeout(Duration::new(5, 0))
         .build()
         .ok()
 }
@@ -156,17 +157,16 @@ impl B64String for String {
     }
 }
 
-pub fn get_current_state<S>(state: &State) -> (String, String, Arc<Mutex<HashMap<String, S>>>, S) where
-    S: ChallengeState + 'static
+pub fn get_current_state(state: &State) -> (String, String, Arc<Mutex<LruCache<String, PartyState>>>, PartyState)
 {
-    let state_tracker: &StateTrackerState<S> = StateTrackerState::borrow_from(state);
+    let state_tracker: &StateTrackerState = StateTrackerState::borrow_from(state);
     let state_id = state_tracker.get_current_state_id();
     let state_sig = state_tracker.get_current_state_signature();
     let state_map = state_tracker.internal_states.clone();
 
-    let current_state = state_map.lock().unwrap().get(&state_id).unwrap().clone();
+    let current_state = state_map.lock().unwrap().get_mut(&state_id).unwrap().clone();
 
-    (state_id, state_sig, state_map, current_state)
+    (state_id, state_sig, state_map, current_state.clone())
 }
 
 pub async fn get_publickey_from_iam(http_client: &mut Client, iam_public_key: RSAPublicKey, inquiring_party: Participant, subject: Participant) -> Result<IAMPublicKeyReport, ()> {

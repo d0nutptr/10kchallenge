@@ -13,8 +13,8 @@ use gotham::helpers::http::response::{create_response, create_empty_response};
 use futures::future::ok;
 use hyper::header::HeaderValue;
 
-const LIMIT_PER_TIME_BUCKET: u64 = 257;
-const SECONDS_PER_TIME_BUCKET: u64 = 60;
+const LIMIT_PER_TIME_BUCKET: u64 = 250;
+const SECONDS_PER_TIME_BUCKET: u64 = 600;
 const X_FORWARDED_FOR: &str = "X-Forwarded-For";
 const X_REQUESTS_REMAINING: &str = "X-Requests-Remaining";
 

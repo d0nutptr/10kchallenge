@@ -4,7 +4,7 @@ use shared_lib::*;
 use gotham::handler::HandlerFuture;
 use futures::FutureExt;
 use std::borrow::BorrowMut;
-use crate::{AliceStates, ADDR_IAM, ADDR_BOB, apply_state_gate_alice};
+use crate::{ADDR_IAM, ADDR_BOB};
 use std::env;
 use hyper::{StatusCode, HeaderMap};
 use tokio::spawn;
@@ -16,6 +16,8 @@ use rsa::{PublicKey, PaddingScheme, RSAPublicKey, BigUint};
 use rsa::hash::Hashes;
 use gotham::helpers::http::response::create_empty_response;
 use hyper::body::Buf;
+use std::any::TypeId;
+use shared_lib::PartyState;
 
 pub fn initiate_auth_protocol(state: State) -> Pin<Box<HandlerFuture>> {
     initiate_auth_protocol_async(state).boxed()
@@ -26,7 +28,7 @@ async fn initiate_auth_protocol_async(mut state: State) -> AsyncHandlerResponse 
     // 1. request iam for pub key
     // 2. on pubkey returned, set new alice state
     // 3. issue request to cited party
-    let (state_id, state_sig, alice_state_map) = match apply_state_gate_alice(&state, AliceStates::INITIAL) {
+    let (state_id, state_sig, alice_state_map) = match apply_state_gate(&state, PartyState::initial_id()) {
         Ok((state_id, state_sig, state_map, _)) => (state_id, state_sig, state_map),
         _ => return Ok(return_generic_error(state))
     };
@@ -73,10 +75,11 @@ async fn initiate_auth_protocol_async(mut state: State) -> AsyncHandlerResponse 
 
         // update alice's state
         {
-            let new_state = AliceStates::AWAITING_NONCE {
+            let new_state = PartyState::AWAITING_NONCE {
                 party_public_key: target_party_public_key.clone(),
                 party: public_key_report.payload.subject,
-                nonce_a: nonce_a.clone()
+                nonce_a: nonce_a.clone(),
+                nonce_b: "".to_string()
             };
 
             alice_state_map.lock().unwrap().insert(state_id.clone(), new_state);

@@ -36,7 +36,7 @@ gotham = { git = "https://github.com/gotham-rs/gotham.git" }
 gotham_derive = { git = "https://github.com/gotham-rs/gotham.git" }
 futures = "^0.3"
 mime = "0.3.16"
-reqwest = { version = "^0.10", features = ["blocking", "json"] }
+reqwest = { version = "^0.10", default-features = false, features = ["rustls-tls", "blocking", "json"] }
 serde = { version = "^1.0", features = ["derive"] }
 serde_derive = "^1.0"
 serde_json = "^1.0"
@@ -48,3 +48,4 @@ sha2 = "0.8.1"
 rsa = "0.2.0"
 chacha20poly1305 = "0.4.1"
 aead = "0.2.0"
+lru-cache = "0.1.2"

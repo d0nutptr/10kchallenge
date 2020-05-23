@@ -3,13 +3,15 @@ use std::pin::Pin;
 use gotham::handler::HandlerFuture;
 use futures::FutureExt;
 use shared_lib::*;
-use crate::{BobStates, ADDR_IAM, apply_state_gate_bob};
+use crate::ADDR_IAM;
 use hyper::{HeaderMap, StatusCode};
 use std::env;
 use tokio::spawn;
 use gotham::helpers::http::response::create_empty_response;
 use reqwest::Proxy;
 use std::time::Duration;
+use std::any::TypeId;
+use shared_lib::PartyState;
 
 pub fn receive_nonce(state: State) -> Pin<Box<HandlerFuture>> {
     receive_nonce_async(state).boxed()
@@ -25,7 +27,7 @@ async fn receive_nonce_async(mut state: State) -> AsyncHandlerResponse {
         6. record nonce_a, party, and party's public key into the state and update state to the listening for nonce
         7. ping party with nonce_b
      */
-    let (state_id, state_sig, state_map) = match apply_state_gate_bob(&state, BobStates::INITIAL) {
+    let (state_id, state_sig, state_map) = match apply_state_gate(&state, PartyState::initial_id()) {
         Ok((state_id, state_sig, state_map, _)) => (state_id, state_sig, state_map),
         _ => return Ok(return_generic_error(state))
     };
@@ -70,7 +72,7 @@ async fn receive_nonce_async(mut state: State) -> AsyncHandlerResponse {
         let nonce_b = generate_nonce();
 
         {
-            let new_state = BobStates::AWAITING_NONCE {
+            let new_state = PartyState::AWAITING_NONCE {
                 party_public_key: target_party_public_key.clone(),
                 party: public_key_report.payload.subject.clone(),
                 nonce_a: nonce_a.clone(),

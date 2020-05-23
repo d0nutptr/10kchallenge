@@ -2,8 +2,7 @@ use gotham::state::{State, FromState};
 use std::pin::Pin;
 use gotham::handler::HandlerFuture;
 use futures::FutureExt;
-use shared_lib::{AsyncHandlerResponse, eve_key, Participant, return_generic_error, AliceAckPayloadInner, AliceAckPayload, extract_json, ServiceKeyState, B64String, SmartRSAPrivateKey, time_safe_comparison, SECRET_KEY_SIZE, create_async_http_client, X_PROXY_ADDR, BobSecretMessage, get_participant_address, X_PROTO_STATE_ID, X_PROTO_STATE_SIG};
-use crate::{apply_state_gate_bob, BobStates};
+use shared_lib::{AsyncHandlerResponse, eve_key, Participant, return_generic_error, AliceAckPayloadInner, AliceAckPayload, extract_json, ServiceKeyState, B64String, SmartRSAPrivateKey, time_safe_comparison, SECRET_KEY_SIZE, create_async_http_client, X_PROXY_ADDR, BobSecretMessage, get_participant_address, X_PROTO_STATE_ID, X_PROTO_STATE_SIG, PartyState, apply_state_gate};
 use std::env;
 use sha2::digest::generic_array::GenericArray;
 use rand::rngs::OsRng;
@@ -14,6 +13,7 @@ use reqwest::Proxy;
 use hyper::{HeaderMap, StatusCode};
 use std::time::Duration;
 use gotham::helpers::http::response::create_empty_response;
+use std::any::TypeId;
 
 const SECRET_MESSAGE: &str = "SECRET_MESSAGE";
 
@@ -32,15 +32,7 @@ async fn ack_nonce_async(mut state: State) -> AsyncHandlerResponse {
         7. send to party
      */
 
-    // we do this because it's hard to check against variants. we don't return this version anyway
-    let faux_bob_state = BobStates::AWAITING_NONCE {
-        party_public_key: eve_key().0,
-        party: Participant::ALICE,
-        nonce_a: "".to_string(),
-        nonce_b: "".to_string()
-    };
-
-    let (state_id, state_sig, state_map, current_state) = match apply_state_gate_bob(&state, faux_bob_state) {
+    let (state_id, state_sig, state_map, current_state) = match apply_state_gate(&state, PartyState::awaiting_nonce_id()) {
         Ok((state_id, state_sig, state_map, current_state)) => (state_id, state_sig, state_map, current_state),
         _ => return Ok(return_generic_error(state))
     };
@@ -52,7 +44,7 @@ async fn ack_nonce_async(mut state: State) -> AsyncHandlerResponse {
     };
 
     let (target_party, nonce_a, nonce_b) = match current_state {
-        BobStates::AWAITING_NONCE {
+        PartyState::AWAITING_NONCE {
             party_public_key, party, nonce_a, nonce_b
         } => (party, nonce_a, nonce_b),
         _ => return Ok(return_generic_error(state))
@@ -68,10 +60,7 @@ async fn ack_nonce_async(mut state: State) -> AsyncHandlerResponse {
         return Ok(return_generic_error(state));
     }
 
-    let secret_message = match env::var(SECRET_MESSAGE) {
-        Ok(addr) => addr,
-        _ => panic!("{} not set", SECRET_MESSAGE)
-    };
+    let secret_message = get_message_for_participant(&target_party);
 
     let (cipher_text, nonce) = encrypt_secret_message(secret_message, nonce_a.clone(), nonce_b.clone());
 
@@ -114,6 +103,23 @@ async fn ack_nonce_async(mut state: State) -> AsyncHandlerResponse {
     let response = create_empty_response(&state, StatusCode::OK);
 
     Ok((state, response))
+}
+
+fn get_message_for_participant(party: &Participant) -> String {
+    match party {
+        Participant::ALICE => {
+            match env::var(SECRET_MESSAGE) {
+                Ok(addr) => addr,
+                _ => panic!("{} not set", SECRET_MESSAGE)
+            }
+        },
+        Participant::BOB => {
+            "nani?".to_string()
+        },
+        Participant::EVE => {
+            "wait a minute.. you're not alice!!! NO SECRET 4 U".to_string()
+        }
+    }
 }
 
 async fn extract_and_decrypt_alice_payload(state: &mut State) -> Option<AliceAckPayloadInner> {

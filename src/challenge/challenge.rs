@@ -23,6 +23,7 @@ use rand::rngs::OsRng;
 use crate::pubkey_reporting::fetch_pubkey;
 use shared_lib::ServiceKeyState;
 use rsa::{RSAPrivateKey, PublicKey};
+use gotham::handler::assets::FileOptions;
 
 mod start_challenge;
 mod pubkey_reporting;
@@ -77,7 +78,7 @@ fn challenge_router(service_key_state: ServiceKeyState, internal_service_secret:
     let (pipelines, challenge_pipeline) = pipelines.add(
         new_pipeline()
             .add(InternalServiceMiddleware::new(internal_service_secret, false))
-            .add(RateLimitMiddleware::new(rate_limit_state.clone()))
+            //.add(RateLimitMiddleware::new(rate_limit_state.clone()))
             .add(StateMiddleware::new(service_key_state.clone()))
             .build()
     );
@@ -88,7 +89,10 @@ fn challenge_router(service_key_state: ServiceKeyState, internal_service_secret:
     let challenge_chain = (challenge_pipeline, ());
 
     build_router(challenge_chain, pipeline_set, |route| {
-        route.get("/").to(index);
+        route.get("/").to_file("assets/index.html");
+        route.get("/robots.txt").to_file("assets/robots.txt");
+        route.get("/favicon.ico").to_file("assets/favicon.ico");
+        route.get("/static/*").to_dir(FileOptions::from("assets/static/").build());
         route.post("/start_challenge").to(start_challenge::start_challenge);
 
         route.with_pipeline_chain(internal_chain, |route| {
